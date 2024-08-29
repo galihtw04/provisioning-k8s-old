@@ -90,6 +90,7 @@ curl -LO "https://dl.k8s.io/release/v$VERSION/bin/linux/amd64/kubeadm"
 sudo install -o root -g root -m 0755 kubeadm /usr/local/bin/kubeadm
 ln -s /usr/local/bin/kubeadm /usr/bin/kubeadm
 ```
+> Sesuaikan vairabel version dengan versi kubernetes yang ingin kalian install, disini saya sarankan untuk menggunakan under version 1.20.
 
 - Create service
 
@@ -146,16 +147,25 @@ EOF
 # enable kubelet
 systemctl daemon-reload
 systemctl enable kubelet.service
-systemctl statu kubelet.service
+systemctl status kubelet.service
 ```
 
-### execute all node
+- check file install_binary.sh and create-service.sh
+```sh
+ls -l | grep -E 'install_binary.sh|create-service.sh'
+```
+<details><summary>image</summary>
+
+![image](./resource/image4.png)
+
+</details>
 
 - install binary all node
 
 ```sh
 for x in $(cat list.txt); do scp install_binary.sh $x:~/ ; ssh $x 'echo =====$(hostname)=====; sudo bash install_binary.sh' ;done
 ```
+> ### setelah menjalankan command diatas, kalian bisa reboot instance kalian secara manual untuk apply package yang sudah di upgrade, Agar package kernel bisa apply.
 
 - create service all node
 
@@ -163,6 +173,45 @@ for x in $(cat list.txt); do scp install_binary.sh $x:~/ ; ssh $x 'echo =====$(h
 for x in $(cat list.txt); do scp create-service.sh $x:~/ ; ssh $x 'echo =====$(hostname)=====; sudo bash create-service.sh' ;done
 ```
 
+- check verify
+```sh
+# check kubectl,kubeadm,kubelet,docker and kernel
+cat <<"EOF"> verify_version.sh
+#!/bin/bash
+
+# Read each line (hostname) from list.txt
+for hostname in $(cat list.txt); do
+
+    # SSH into the hostname and run the commands to get versions
+    ssh "$hostname" "
+        echo "====$(hostname)==="
+        kubelet_version=\$(kubelet --version 2>/dev/null | awk '{print \$2}')
+        kubeadm_version=\$(kubeadm version -o short 2>/dev/null)
+        kubectl_version=\$(kubectl version --short=true 2>/dev/null | cut -d ' ' -f 3)
+        docker_version=\$(docker --version 2>/dev/null | awk '{print \$3}' | sed 's/,//')
+        kernel_version=\$(uname -r)
+
+        echo \"kubelet=\$kubelet_version\"
+        echo \"kubeadm=\$kubeadm_version\"
+        echo \"kubectl=\$kubectl_version\"
+        echo \"docker=\$docker_version\"
+        echo \"kernel=\$kernel_version\"
+    "
+
+    echo ""
+done
+EOF
+```
+
+```sh
+bash verify_version.sh
+```
+
+<details><summary>verify_version</summary>
+
+![verify package](./resource/image-1.png)
+
+</details>
 
 # Configurasi only master
 
@@ -217,7 +266,7 @@ sudo kubeadm init --config=kubeadm-config.yaml
 
 > text yang perlu kita copy dan nanti kita paste pass worker berikut exmpale nya **kubeadm join k8s-master-01:6443 --token o08f2w.7csj1gwl8nw9qzta --discovery-token-ca-cert-hash sha256:31e9af4749bfad83a4372ab3cf6ab12b3548a28502aa765db5b3f41b21feb45f**
 
-### join to worker
+### Execute on instance Worker
 
 - join worker
 paste command kubeadm join yang muncul ketika kita berhasil kubeadm pada master-01 tadi.
@@ -241,13 +290,20 @@ kubectl get nodes -o wide
 
 - install cni flannel
 
+### exeucte all node
 ```sh
-wget https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+sudo mkdir -p /opt/cni/bin
+curl -sSL https://github.com/containernetworking/plugins/releases/download/v1.5.1/cni-plugins-linux-amd64-v1.5.1.tgz | sudo tar -zxf - -C /opt/cni/bin
+```
+
+### execute only master
+```sh
+wget https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
 
 # edited pods subnet
 sed -i 's/10.244.0.0\/16/172.16.100.0\/16/' kube-flannel.yml
 # change deploy flannel from kube-flannel to kube-system
-sed -i 's/namespace: kube-flannel/namespace: kube-system/g' kube-flannel.yaml
+sed -i 's/namespace: kube-flannel/namespace: kube-system/g' kube-flannel.yml
 ```
 > sesuaikan dengan pods subnet, yang sudah kita definisikan pada kubeadm-config.yaml.
 
@@ -255,4 +311,17 @@ sed -i 's/namespace: kube-flannel/namespace: kube-system/g' kube-flannel.yaml
 
 ```sh
 kubectl apply -f kube-flannel.yml
+# delete namespace
+kubectl delete ns kube-flannel
 ```
+
+### verify node and pods
+
+```sh
+# check nodes
+kubectl get nodes -o wide
+# check pods kube-system
+kubectl get pods -n kube-system -o wide
+```
+
+![image verify nodes](./resource/image6.png)
